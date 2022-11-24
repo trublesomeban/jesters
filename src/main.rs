@@ -1,4 +1,3 @@
-#![allow(unused, unreachable_code)]
 macro_rules! str {
     () => {
         String::new()
@@ -8,92 +7,165 @@ macro_rules! str {
     };
 }
 
-use std::{collections::HashMap, error::Error, fs::read_to_string, hash::Hash, io::stdin};
+use std::{
+    collections::HashMap, default::Default, error::Error, fs::read_to_string, io::stdin,
+    str::FromStr,
+};
+
+struct Exit(u64);
 
 fn main() -> Result<(), Box<dyn Error>> {
     let reader = stdin();
     println!("Błazeńsko szybki terminal!");
     let mut varmap: HashMap<String, String> = HashMap::new();
+    varmap.insert(str!("undefined"), str!("undefined"));
+    let mut pipe: Vec<String> = vec![];
     loop {
         let mut input = str!();
         reader.read_line(&mut input)?;
         let args = parse_args(input.trim().to_string());
         // println!("{:?}", args);
-        match args[0].as_str() {
-            "echo" => {
-                if args.len() < 2 {
-                    println!("Nie podano argumentu")
-                } else {
-                    if args[1] == "--inicjały" {
-                        println!("{}", read_to_string("inicjały.txt").unwrap())
-                    } else {
-                        for i in 1..args.len() {
-                            let var = lookup_var(&args[0], &varmap);
-                            match var {
-                                Ok(val) => print!("{}", val),
-                                Err(e) => {
-                                    println!("{e} this is an erfror");
-                                    break;
-                                }
-                            }
-                        }
-                        print!("\n")
-                    }
-                }
-            }
-            "exit" => {
-                if args.len() < 2 {
-                    println!("Nie podano argumentu")
-                } else {
-                    let var = lookup_var(&args[0], &varmap);
-                    match var {
-                        Ok(val) => println!("Exited with code {}", val),
-                        Err(e) => println!("{e}"),
-                    }
-                }
-                break;
-            }
-            "var" => {
-                if args.len() < 2 {
-                    println!("Nie podano argumentu")
-                } else {
-                    let var = lookup_var(&args[2], &varmap);
-
-                    varmap.insert(
-                        args[1].clone(),
-                        match var {
-                            Ok(val) => val.to_owned(),
-                            Err(e) => String::from("undefined"),
-                        },
-                    );
-                }
-            }
-            "cmp" => {
-                if args.len() < 3 {
-                    println!("Porównanie wymaga przynajmniej dwóch wartości.")
-                } else {
-                    let mut ops: Vec<i64> = vec![];
-                    for i in 1..args.len() {
-                        let var = lookup_var(&args[i], &varmap);
-                        match var {
-                            Ok(val) => ops.push(val.parse::<i64>().unwrap()),
-                            Err(e) => {
-                                println!("{e} this is an error");
-                                break;
-                            }
-                        }
-                    }
-                    ops.sort();
-                    for i in &ops[0..ops.len() - 1] {
-                        print!("{i} < ")
-                    }
-                    println!("{}", ops[ops.len() - 1])
-                }
-            }
-            _ => println!("Nieznana komenda"),
+        match match_command(&args, &mut varmap, &pipe) {
+            Ok(new_pipe) => pipe = new_pipe,
+            Err(Exit(code)) => break println!("Exited with code {code}"),
         }
     }
     Ok(())
+}
+
+fn match_command(
+    args: &Vec<String>,
+    varmap: &mut HashMap<String, String>,
+    pipe: &Vec<String>,
+) -> Result<Vec<String>, Exit> {
+    let mut new_pipe: Vec<String> = vec![];
+    match args[0].as_str() {
+        "echo" => {
+            if args.len() < 2 {
+                println!("Nie podano argumentu")
+            } else {
+                if args[1] == "--inicjały" {
+                    println!("{}", read_to_string("inicjały.txt").unwrap())
+                } else {
+                    let mut args = args.to_owned();
+                    let delim = if !args[1].contains("\"") && args[1].contains("--delim") {
+                        let _v = args[2].to_owned();
+                        args.remove(1);
+                        args.remove(1);
+                        _v
+                    } else {
+                        str!(" ")
+                    };
+                    let out = collect_args::<String>(&args, &varmap, &pipe).join(delim.as_str());
+                    println!("{out}");
+                    new_pipe.clear();
+                    new_pipe.push(out);
+                }
+            }
+        }
+        "exit" => {
+            if args.len() < 2 {
+                println!("Nie podano argumentu")
+            } else {
+                let val = lookup_var(&args[0], &varmap, &pipe);
+                return Err(Exit(val.parse::<u64>().unwrap()));
+            }
+        }
+        "var" => {
+            if args.len() < 2 {
+                println!("Nie podano argumentu")
+            } else {
+                let var = lookup_var(&args[2], &varmap, &pipe);
+                varmap.insert(args[1].clone(), var.to_owned());
+            }
+        }
+        "cmp" => {
+            if args.len() < 3 {
+                println!("Porównanie wymaga przynajmniej dwóch wartości.")
+            } else {
+                let mut vals = collect_args::<i64>(&args, &varmap, &pipe);
+                vals.sort();
+                // for i in &vals[0..vals.len() - 1] {
+                //     // iterate through all except last element
+                //     print!("{i} ≤ ")
+                // }
+                // println!("{}", vals[vals.len() - 1]); // print the last element with a newline
+                new_pipe.clear();
+                new_pipe = vals.iter().map(|v| v.to_string()).collect::<Vec<String>>();
+            }
+        }
+        "sum" => {
+            if args.len() < 3 {
+                println!("Sumowanie wymaga przynajmniej dwóch wartości.")
+            } else {
+                let vals = collect_args(&args, &varmap, &pipe);
+                let sum: i64 = vals.iter().sum();
+                new_pipe.clear();
+                new_pipe.push(sum.to_string());
+            }
+        }
+        "prod" => {
+            if args.len() < 3 {
+                println!("Mnożenie wymaga przynajmniej dwóch wartości.")
+            } else {
+                let vals = collect_args(&args, &varmap, &pipe);
+                let prod: i64 = vals.iter().product();
+                new_pipe.clear();
+                new_pipe.push(prod.to_string());
+            }
+        }
+        "fac" => {
+            if args.len() < 2 {
+                println!("Nie podano podstawy")
+            } else {
+                let base = lookup_var(&args[1], &varmap, &pipe)
+                    .parse::<i64>()
+                    .unwrap_or(args[1].len() as i64);
+                if base == 0 {
+                    println!("0")
+                } else {
+                    let res = (1..=base).product::<i64>();
+                    new_pipe.clear();
+                    new_pipe.push(res.to_string());
+                }
+            }
+        }
+        "pow" => {
+            if args.len() < 3 {
+                println!("Nie podano wszystkich argumentów")
+            } else {
+                let base = lookup_var(&args[1], &varmap, &pipe)
+                    .parse::<i64>()
+                    .unwrap_or(args[1].len() as i64);
+                let power = lookup_var(&args[1], &varmap, &pipe)
+                    .parse::<i64>()
+                    .unwrap_or(args[1].len() as i64);
+                let res = base.pow(power as u32);
+                println!("{}", res);
+                new_pipe.clear();
+                new_pipe.push(res.to_string());
+            }
+        }
+        "peek" => {
+            if args.len() < 2 {
+                println!("Nie podano nazwy pliku")
+            } else {
+                let path = args[1].to_owned();
+                let name = path.split("/").last().expect("ItErrAtor");
+                let contents =
+                    read_to_string(format!("./{path}")).expect("Error  when reading file");
+                println!("===========================================");
+                println!("{}", name);
+                println!("===========================================");
+                for line in contents.split("\n") {
+                    println!("~ {line}")
+                }
+                println!("===========================================");
+            }
+        }
+        _ => println!("Nieznana komenda"),
+    };
+    Ok(new_pipe)
 }
 
 fn parse_args(args: String) -> Vec<String> {
@@ -136,17 +208,42 @@ fn parse_args(args: String) -> Vec<String> {
     parsed
 }
 
+fn collect_args<'a, T: FromStr + Default>(
+    args: &Vec<String>,
+    varmap: &'a HashMap<String, String>,
+    pipe: &Vec<String>,
+) -> Vec<T> {
+    if args[1] == "|" {
+        pipe.iter()
+            .map(|val| val.parse::<T>().unwrap_or(T::default()))
+            .collect::<Vec<T>>()
+    } else {
+        args[1..args.len()]
+            .iter()
+            .map(|val| {
+                lookup_var(&val, &varmap, pipe)
+                    .parse::<T>()
+                    .unwrap_or(T::default())
+            })
+            .collect::<Vec<T>>()
+    }
+}
+
 fn lookup_var<'a>(
     str: &'a String,
     varmap: &'a HashMap<String, String>,
-) -> Result<&'a String, String> {
-    if !str.contains("$") {
-        Ok(str)
-    } else {
+    pipe: &'a Vec<String>,
+) -> &'a String {
+    if str.contains("$") {
         let lookup = str.clone();
         match varmap.get(&lookup[1..lookup.len()]) {
-            None => Err(String::from(format!("Zmienna '{lookup}' nie istnieje"))),
-            Some(val) => Ok(val),
+            None => varmap.get("undefined").unwrap(),
+            Some(val) => val,
         }
+    } else if str.contains("|") {
+        let idx = str[1..str.len()].parse::<usize>().unwrap();
+        &pipe[idx]
+    } else {
+        str
     }
 }
