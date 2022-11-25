@@ -12,6 +12,7 @@ use std::{
     str::FromStr,
 };
 
+#[derive(Debug)]
 struct Exit(u64);
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -88,7 +89,10 @@ fn match_command(
         }
         "mpop" => {
             let count = if args.len() == 2 {
-                lookup_var(&args[1], &varmap, &mem).to_owned().parse::<usize>().unwrap()
+                lookup_var(&args[1], &varmap, &mem)
+                    .to_owned()
+                    .parse::<usize>()
+                    .unwrap()
             } else {
                 0
             };
@@ -110,13 +114,22 @@ fn match_command(
             let mut args = args.to_owned();
             let eoa = args.iter().position(|sep| sep == "/").unwrap();
             let map_args = &args[0..eoa].to_vec();
-            let vals = collect_args::<i64>(map_args, &varmap, &mem);
-            for _ in 0..eoa {
+            let mut vals = collect_args::<String>(map_args, &varmap, &mem);
+            for _ in 0..(eoa - 1) {
                 args.remove(0);
             }
-            for val in vals {
-                match_command(&args, varmap, mem)
+            // println!("{:?}", args);
+            args[0] = args[2].to_owned();
+            args[1] = str!("tmp");
+            // println!("{:?}", args);
+            for i in 0..vals.len() {
+                args[2] = vals[i].to_owned();
+                // println!("{:?}", args);
+                match_command(&args, varmap, mem).unwrap();
+                vals[i] = varmap.get("tmp").unwrap().to_owned();
             }
+            // println!("{:?}", vals);
+            new_mem = vals;
         }
         "sort" => {
             let mut vals = collect_args::<i64>(&args, &varmap, &mem);
@@ -138,7 +151,18 @@ fn match_command(
             varmap.insert(var, sum.to_string());
             new_mem = mem.to_owned();
         }
-        "prod" => {
+        "sub" => {
+            let mut args = args.to_owned();
+            let var = lookup_var(&args[1], &varmap, &mem).to_owned();
+            args.remove(1);
+            let mut vals = collect_args::<i64>(&args, &varmap, &mem);
+            vals[0] = -vals[0];
+            vals = vals.iter().map(|x| -x).collect::<Vec<i64>>();
+            let sum: i64 = vals.iter().sum();
+            varmap.insert(var, sum.to_string());
+            new_mem = mem.to_owned();
+        }
+        "mul" => {
             let mut args = args.to_owned();
             let var = lookup_var(&args[1], &varmap, &mem).to_owned();
             args.remove(1);
@@ -247,6 +271,14 @@ fn collect_args<'a, T: FromStr + Default>(
 ) -> Vec<T> {
     if args[1] == "|" {
         mem.iter()
+            .map(|val| val.parse::<T>().unwrap_or(T::default()))
+            .collect::<Vec<T>>()
+    } else if &args[1][0..1] == "&" {
+        let range = &args[1][1..args[1].len()].split(":").collect::<Vec<&str>>();
+        let start = range[0].parse::<usize>().unwrap();
+        let end = range[1].parse::<usize>().unwrap();
+        mem[start..=end]
+            .iter()
             .map(|val| val.parse::<T>().unwrap_or(T::default()))
             .collect::<Vec<T>>()
     } else {
