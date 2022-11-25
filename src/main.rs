@@ -19,14 +19,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("Błazeńsko szybki terminal!");
     let mut varmap: HashMap<String, String> = HashMap::new();
     varmap.insert(str!("undefined"), str!("undefined"));
-    let mut pipe: Vec<String> = vec![];
+    let mut mem: Vec<String> = vec![];
     loop {
         let mut input = str!();
         reader.read_line(&mut input)?;
         let args = parse_args(input.trim().to_string());
         // println!("{:?}", args);
-        match match_command(&args, &mut varmap, &pipe) {
-            Ok(new_pipe) => pipe = new_pipe,
+        match match_command(&args, &mut varmap, &mem) {
+            Ok(new_mem) => mem = new_mem,
             Err(Exit(code)) => break println!("Exited with code {code}"),
         }
     }
@@ -36,9 +36,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn match_command(
     args: &Vec<String>,
     varmap: &mut HashMap<String, String>,
-    pipe: &Vec<String>,
+    mem: &Vec<String>,
 ) -> Result<Vec<String>, Exit> {
-    let mut new_pipe: Vec<String> = vec![];
+    let mut new_mem: Vec<String> = vec![];
     match args[0].as_str() {
         "echo" => {
             if args.len() < 2 {
@@ -48,19 +48,18 @@ fn match_command(
                     println!("{}", read_to_string("inicjały.txt").unwrap())
                 } else {
                     let mut args = args.to_owned();
-                    let delim = if !args[1].contains("\"") && args[1].contains("--delim") {
-                        let _v = args[2].to_owned();
+                    let delim = if args[1] == "--delim" {
+                        let _v = lookup_var(&args[2], &varmap, &mem).to_owned();
                         args.remove(1);
                         args.remove(1);
                         _v
                     } else {
                         str!(" ")
                     };
-                    let echo_args = collect_args::<String>(&args, &varmap, &pipe);
+                    let echo_args = collect_args::<String>(&args, &varmap, &mem);
                     let out = echo_args.join(delim.as_str());
                     println!("{out}");
-                    new_pipe.clear();
-                    new_pipe = echo_args;
+                    new_mem = mem.to_owned();
                 }
             }
         }
@@ -68,73 +67,115 @@ fn match_command(
             if args.len() < 2 {
                 println!("Nie podano argumentu")
             } else {
-                let val = lookup_var(&args[1], &varmap, &pipe);
+                let val = lookup_var(&args[1], &varmap, &mem);
                 return Err(Exit(val.parse::<u64>().unwrap()));
             }
         }
         "var" => {
-            if args.len() < 2 {
-                println!("Nie podano argumentu")
+            let var = lookup_var(&args[2], &varmap, &mem);
+            varmap.insert(args[1].clone(), var.to_owned());
+            new_mem = mem.to_owned();
+        }
+        "mset" => {
+            let vals = collect_args::<String>(&args, &varmap, &mem);
+            new_mem.clear();
+            new_mem = vals;
+        }
+        "mpush" => {
+            let vals = collect_args::<String>(&args, &varmap, &mem);
+            new_mem = mem.to_owned();
+            new_mem.extend(vals);
+        }
+        "mpop" => {
+            let count = if args.len() == 2 {
+                lookup_var(&args[1], &varmap, &mem).to_owned().parse::<usize>().unwrap()
             } else {
-                let var = lookup_var(&args[2], &varmap, &pipe);
-                varmap.insert(args[1].clone(), var.to_owned());
+                0
+            };
+            new_mem = mem.to_owned();
+            for _ in 0..count {
+                new_mem.pop();
             }
         }
-        "list" => {
-            let vals = collect_args::<i64>(&args, &varmap, &pipe);
-            new_pipe.clear();
-            new_pipe = vals.iter().map(|v| v.to_string()).collect::<Vec<String>>();
+        "mreset" => {}
+        "len" => {
+            let mut args = args.to_owned();
+            let var = lookup_var(&args[1], &varmap, &mem).to_owned();
+            args.remove(1);
+            let vals = collect_args::<i64>(&args, &varmap, &mem);
+            varmap.insert(var, vals.len().to_string());
+            new_mem = mem.to_owned();
         }
-        "cmp" => {
-            let mut vals = collect_args::<i64>(&args, &varmap, &pipe);
+        "map" => {
+            let mut args = args.to_owned();
+            let eoa = args.iter().position(|sep| sep == "/").unwrap();
+            let map_args = &args[0..eoa].to_vec();
+            let vals = collect_args::<i64>(map_args, &varmap, &mem);
+            for _ in 0..eoa {
+                args.remove(0);
+            }
+            for val in vals {
+                match_command(&args, varmap, mem)
+            }
+        }
+        "sort" => {
+            let mut vals = collect_args::<i64>(&args, &varmap, &mem);
             vals.sort();
             // for i in &vals[0..vals.len() - 1] {
             //     // iterate through all except last element
             //     print!("{i} ≤ ")
             // }
             // println!("{}", vals[vals.len() - 1]); // print the last element with a newline
-            new_pipe.clear();
-            new_pipe = vals.iter().map(|v| v.to_string()).collect::<Vec<String>>();
+            new_mem.clear();
+            new_mem = vals.iter().map(|v| v.to_string()).collect::<Vec<String>>();
         }
         "sum" => {
-            let vals = collect_args(&args, &varmap, &pipe);
+            let mut args = args.to_owned();
+            let var = lookup_var(&args[1], &varmap, &mem).to_owned();
+            args.remove(1);
+            let vals = collect_args(&args, &varmap, &mem);
             let sum: i64 = vals.iter().sum();
-            new_pipe.clear();
-            new_pipe.push(sum.to_string());
+            varmap.insert(var, sum.to_string());
+            new_mem = mem.to_owned();
         }
         "prod" => {
-            let vals = collect_args(&args, &varmap, &pipe);
+            let mut args = args.to_owned();
+            let var = lookup_var(&args[1], &varmap, &mem).to_owned();
+            args.remove(1);
+            let vals = collect_args(&args, &varmap, &mem);
             let prod: i64 = vals.iter().product();
-            new_pipe.clear();
-            new_pipe.push(prod.to_string());
+            varmap.insert(var, prod.to_string());
+            new_mem = mem.to_owned();
         }
         "fac" => {
-            let base = lookup_var(&args[1], &varmap, &pipe)
+            let mut args = args.to_owned();
+            let var = lookup_var(&args[1], &varmap, &mem).to_owned();
+            args.remove(1);
+            let base = lookup_var(&args[1], &varmap, &mem)
                 .parse::<i64>()
                 .unwrap_or(args[1].len() as i64);
-            if base == 0 {
-                println!("0")
+            let res = if base == 0 {
+                0
             } else {
-                let res = (1..=base).product::<i64>();
-                new_pipe.clear();
-                new_pipe.push(res.to_string());
-            }
+                (1..=base).product::<i64>()
+            };
+            varmap.insert(var, res.to_string());
+            new_mem = mem.to_owned();
         }
         "pow" => {
-            if args.len() < 3 {
-                println!("Nie podano wszystkich argumentów")
-            } else {
-                let base = lookup_var(&args[1], &varmap, &pipe)
-                    .parse::<i64>()
-                    .unwrap_or(args[1].len() as i64);
-                let power = lookup_var(&args[2], &varmap, &pipe)
-                    .parse::<i64>()
-                    .unwrap_or(args[1].len() as i64);
-                let res = base.pow(power as u32);
-                // println!("{}", res);
-                new_pipe.clear();
-                new_pipe.push(res.to_string());
-            }
+            let mut args = args.to_owned();
+            let var = lookup_var(&args[1], &varmap, &mem).to_owned();
+            args.remove(1);
+            let base = lookup_var(&args[1], &varmap, &mem)
+                .parse::<i64>()
+                .unwrap_or(args[1].len() as i64);
+            let power = lookup_var(&args[2], &varmap, &mem)
+                .parse::<i64>()
+                .unwrap_or(args[1].len() as i64);
+            let res = base.pow(power as u32);
+            // println!("{}", res);
+            varmap.insert(var, res.to_string());
+            new_mem = mem.to_owned();
         }
         "peek" => {
             if args.len() < 2 {
@@ -155,7 +196,8 @@ fn match_command(
         }
         _ => println!("Nieznana komenda"),
     };
-    Ok(new_pipe)
+    // println!("mem values: {:?}", new_mem);
+    Ok(new_mem)
 }
 
 fn parse_args(args: String) -> Vec<String> {
@@ -201,17 +243,17 @@ fn parse_args(args: String) -> Vec<String> {
 fn collect_args<'a, T: FromStr + Default>(
     args: &Vec<String>,
     varmap: &'a HashMap<String, String>,
-    pipe: &Vec<String>,
+    mem: &Vec<String>,
 ) -> Vec<T> {
     if args[1] == "|" {
-        pipe.iter()
+        mem.iter()
             .map(|val| val.parse::<T>().unwrap_or(T::default()))
             .collect::<Vec<T>>()
     } else {
         args[1..args.len()]
             .iter()
             .map(|val| {
-                lookup_var(&val, &varmap, pipe)
+                lookup_var(&val, &varmap, mem)
                     .parse::<T>()
                     .unwrap_or(T::default())
             })
@@ -222,7 +264,7 @@ fn collect_args<'a, T: FromStr + Default>(
 fn lookup_var<'a>(
     str: &'a String,
     varmap: &'a HashMap<String, String>,
-    pipe: &'a Vec<String>,
+    mem: &'a Vec<String>,
 ) -> &'a String {
     if str.contains("$") {
         let lookup = str.clone();
@@ -232,7 +274,10 @@ fn lookup_var<'a>(
         }
     } else if str.contains("|") {
         let idx = str[1..str.len()].parse::<usize>().unwrap();
-        &pipe[idx]
+        &mem[idx]
+    } else if str.contains("&") {
+        let idx = str[1..str.len()].parse::<usize>().unwrap();
+        &mem[idx]
     } else {
         str
     }
