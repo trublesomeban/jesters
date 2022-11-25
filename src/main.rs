@@ -56,10 +56,11 @@ fn match_command(
                     } else {
                         str!(" ")
                     };
-                    let out = collect_args::<String>(&args, &varmap, &pipe).join(delim.as_str());
+                    let echo_args = collect_args::<String>(&args, &varmap, &pipe);
+                    let out = echo_args.join(delim.as_str());
                     println!("{out}");
                     new_pipe.clear();
-                    new_pipe.push(out);
+                    new_pipe = echo_args;
                 }
             }
         }
@@ -67,7 +68,7 @@ fn match_command(
             if args.len() < 2 {
                 println!("Nie podano argumentu")
             } else {
-                let val = lookup_var(&args[0], &varmap, &pipe);
+                let val = lookup_var(&args[1], &varmap, &pipe);
                 return Err(Exit(val.parse::<u64>().unwrap()));
             }
         }
@@ -79,55 +80,44 @@ fn match_command(
                 varmap.insert(args[1].clone(), var.to_owned());
             }
         }
+        "list" => {
+            let vals = collect_args::<i64>(&args, &varmap, &pipe);
+            new_pipe.clear();
+            new_pipe = vals.iter().map(|v| v.to_string()).collect::<Vec<String>>();
+        }
         "cmp" => {
-            if args.len() < 3 {
-                println!("Porównanie wymaga przynajmniej dwóch wartości.")
-            } else {
-                let mut vals = collect_args::<i64>(&args, &varmap, &pipe);
-                vals.sort();
-                // for i in &vals[0..vals.len() - 1] {
-                //     // iterate through all except last element
-                //     print!("{i} ≤ ")
-                // }
-                // println!("{}", vals[vals.len() - 1]); // print the last element with a newline
-                new_pipe.clear();
-                new_pipe = vals.iter().map(|v| v.to_string()).collect::<Vec<String>>();
-            }
+            let mut vals = collect_args::<i64>(&args, &varmap, &pipe);
+            vals.sort();
+            // for i in &vals[0..vals.len() - 1] {
+            //     // iterate through all except last element
+            //     print!("{i} ≤ ")
+            // }
+            // println!("{}", vals[vals.len() - 1]); // print the last element with a newline
+            new_pipe.clear();
+            new_pipe = vals.iter().map(|v| v.to_string()).collect::<Vec<String>>();
         }
         "sum" => {
-            if args.len() < 3 {
-                println!("Sumowanie wymaga przynajmniej dwóch wartości.")
-            } else {
-                let vals = collect_args(&args, &varmap, &pipe);
-                let sum: i64 = vals.iter().sum();
-                new_pipe.clear();
-                new_pipe.push(sum.to_string());
-            }
+            let vals = collect_args(&args, &varmap, &pipe);
+            let sum: i64 = vals.iter().sum();
+            new_pipe.clear();
+            new_pipe.push(sum.to_string());
         }
         "prod" => {
-            if args.len() < 3 {
-                println!("Mnożenie wymaga przynajmniej dwóch wartości.")
-            } else {
-                let vals = collect_args(&args, &varmap, &pipe);
-                let prod: i64 = vals.iter().product();
-                new_pipe.clear();
-                new_pipe.push(prod.to_string());
-            }
+            let vals = collect_args(&args, &varmap, &pipe);
+            let prod: i64 = vals.iter().product();
+            new_pipe.clear();
+            new_pipe.push(prod.to_string());
         }
         "fac" => {
-            if args.len() < 2 {
-                println!("Nie podano podstawy")
+            let base = lookup_var(&args[1], &varmap, &pipe)
+                .parse::<i64>()
+                .unwrap_or(args[1].len() as i64);
+            if base == 0 {
+                println!("0")
             } else {
-                let base = lookup_var(&args[1], &varmap, &pipe)
-                    .parse::<i64>()
-                    .unwrap_or(args[1].len() as i64);
-                if base == 0 {
-                    println!("0")
-                } else {
-                    let res = (1..=base).product::<i64>();
-                    new_pipe.clear();
-                    new_pipe.push(res.to_string());
-                }
+                let res = (1..=base).product::<i64>();
+                new_pipe.clear();
+                new_pipe.push(res.to_string());
             }
         }
         "pow" => {
@@ -137,11 +127,11 @@ fn match_command(
                 let base = lookup_var(&args[1], &varmap, &pipe)
                     .parse::<i64>()
                     .unwrap_or(args[1].len() as i64);
-                let power = lookup_var(&args[1], &varmap, &pipe)
+                let power = lookup_var(&args[2], &varmap, &pipe)
                     .parse::<i64>()
                     .unwrap_or(args[1].len() as i64);
                 let res = base.pow(power as u32);
-                println!("{}", res);
+                // println!("{}", res);
                 new_pipe.clear();
                 new_pipe.push(res.to_string());
             }
